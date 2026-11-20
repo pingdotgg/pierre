@@ -452,9 +452,60 @@ void test('sourcePositions gives math its whole source range', () => {
     ),
     ['$x$', '\\(ü\\)', '$$y$$', '\\[\nk \\]', '$$\nm\n$$  ', '```math\nz\n```', '\\(p|q\\)']
   );
-  // the block still open at EOF renders without a range
-  assert.equal(output.match(/<svg /g)?.length, 8);
+  // With texDelimiters, a math block still open at EOF stays prose (no SVG).
+  assert.equal(output.match(/<svg /g)?.length, 7);
+  // Without texDelimiters, an open `$$` block still renders without a range.
+  const openPlain = html('$$\nopen', { math: true, sourcePositions: true });
+  assert.equal(openPlain.match(/<svg /g)?.length, 1);
+  assert.doesNotMatch(openPlain, /data-sourcepos/);
   assert.doesNotMatch(html('$x$', { math: true }), /data-sourcepos/);
+});
+
+void test('texDelimiters handles blank lines, unclosed blocks, shell vars, code, links, and tables', () => {
+  const on = { math: true, texDelimiters: true };
+  // Blank lines inside $$ blocks stay inside the formula, unless closing a quote.
+  assert.match(html('$$\na = 1 \\\\\n\nb = 2\n$$', on), /^<svg /);
+  assert.doesNotMatch(html('> $$\n> a = 1\n\nb = 2\n$$', on), /<svg /);
+  // Unclosed $$, \[, and ```math stay prose / code while streaming.
+  assert.equal(html('$$\n\\frac{a}{b}', on), '<p>$$\n\\frac{a}{b}</p>\n');
+  assert.equal(html('\\[\nx^2\n- y', on), '<p>[\nx^2</p>\n<ul>\n<li>y</li>\n</ul>\n');
+  assert.equal(html('```math\nx^2', on), '<pre><code class="language-math">x^2\n</code></pre>\n');
+  // Shell variables, adjacent code spans, and links with `$` stay prose.
+  for (const prose of [
+    'Set $HOME,$PATH and $HOME,${PATH} and $HOME,$(pwd) and $HOME,$? before running.',
+    'Pay $5,$10 now.',
+  ]) {
+    assert.doesNotMatch(html(prose, on), /<svg /, prose);
+  }
+  assert.equal(
+    html('Set $FOO to `$BAR` then $BAZ.', on),
+    '<p>Set $FOO to <code>$BAR</code> then $BAZ.</p>\n'
+  );
+  assert.equal(
+    html('Set $TOKEN, then open [users](https://graph.microsoft.com/v1.0/users?$select=id).', on),
+    '<p>Set $TOKEN, then open <a href="https://graph.microsoft.com/v1.0/users?$select=id">users</a>.</p>\n'
+  );
+  assert.equal(
+    html('Set $TOKEN, then open <https://graph.microsoft.com/v1.0/users?$select=id>.', on),
+    '<p>Set $TOKEN, then open <a href="https://graph.microsoft.com/v1.0/users?$select=id">https://graph.microsoft.com/v1.0/users?$select=id</a>.</p>\n'
+  );
+  assert.equal(html('Sum $a +\nb$ here.', on), '<p>Sum $a +\nb$ here.</p>\n');
+  // Formulas ending in a comma before whitespace or punctuation still parse.
+  assert.equal(html('Where $x = 1,$ with $y,$ and $z,$.', on).match(/<svg /g)?.length, 3);
+  // Literal `$` in link URLs, code spans, or HTML inside GFM table cells keeps cells intact.
+  const literalTable = html(
+    '| [a](https://example.com/$x) | `$x` | <span title="$x">a</span> | y$ |\n| --- | --- | --- | --- |',
+    on
+  );
+  assert.match(literalTable, /^<table>/);
+  assert.equal(literalTable.match(/<th>/g)?.length, 4);
+  assert.doesNotMatch(literalTable, /<svg /);
+  const linkMathTable = html(
+    '| First | Second |\n| --- | --- |\n| [norm $|x|$](https://example.com/$path) | y$ |',
+    on
+  );
+  assert.match(linkMathTable, /<td>y\$<\/td>/);
+  assert.equal(linkMathTable.match(/<svg /g)?.length, 1);
 });
 
 void test('autolinkBoundaries keeps trailing _/~ and stops at CJK/Arabic punctuation', () => {
