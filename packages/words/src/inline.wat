@@ -538,6 +538,8 @@
     (local $n i32)
     (local $i i32)
     (local $c i32)
+    (local $prev1 i32)
+    (local $prev2 i32)
     (global.set $mathAtEnd (i32.const 0))
     (local.set $q (local.get $p))
     (loop $run
@@ -548,10 +550,17 @@
     (global.set $mathRun (local.get $q))
     (if (i32.or (i32.gt_u (local.get $n) (i32.const 2)) (i32.ge_u (local.get $q) (local.get $end)))
       (then (return (i32.const 0))))
-    (if (i32.and (i32.eq (local.get $n) (i32.const 1))
-          (call $isWhiteCp (call $utf8At (i32.add (local.get $base) (local.get $q))
-            (i32.add (local.get $base) (local.get $end)))))
+    (local.set $c (i32.load8_u (i32.add (local.get $base) (local.get $q))))
+    (if (i32.and (global.get $texMath)
+          (i32.or (i32.eq (local.get $c) (i32.const 10)) (i32.eq (local.get $c) (i32.const 13))))
       (then (return (i32.const 0))))
+    (if (i32.eq (local.get $n) (i32.const 1))
+      (then
+        (if (i32.or
+              (call $isWhiteCp (call $utf8At (i32.add (local.get $base) (local.get $q))
+                (i32.add (local.get $base) (local.get $end))))
+              (i32.and (global.get $texMath) (i32.eq (local.get $c) (i32.const ","))))
+          (then (return (i32.const 0))))))
     (local.set $i (local.get $q))
     (block $none
       (loop $scan
@@ -561,19 +570,55 @@
             (br $none)))
         (local.set $c (i32.load8_u (i32.add (local.get $base) (local.get $i))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (if (global.get $texMath)
+          (then
+            ;; llm-math rejects code spans, URLs (`://`), and single-$ line breaks
+            (br_if $none (i32.eq (local.get $c) (i32.const "\60")))
+            (br_if $none (i32.and (i32.eq (local.get $n) (i32.const 1))
+              (i32.or (i32.eq (local.get $c) (i32.const 10)) (i32.eq (local.get $c) (i32.const 13)))))
+            (br_if $none (i32.and (i32.eq (local.get $c) (i32.const "/"))
+              (i32.and (i32.eq (local.get $prev1) (i32.const "/"))
+                (i32.eq (local.get $prev2) (i32.const ":")))))))
         (if (i32.eq (local.get $c) (i32.const "\5c"))
           (then
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (local.set $prev2 (i32.const 0))
+            (local.set $prev1 (i32.const 0))
             (br $scan)))
-        (br_if $scan (i32.ne (local.get $c) (i32.const "$")))
+        (if (i32.ne (local.get $c) (i32.const "$"))
+          (then
+            (local.set $prev2 (local.get $prev1))
+            (local.set $prev1 (local.get $c))
+            (br $scan)))
         ;; $i is past a `$`, and $c becomes the byte after it
         (local.set $c (select (i32.load8_u (i32.add (local.get $base) (local.get $i))) (i32.const 0)
           (i32.lt_u (local.get $i) (local.get $end))))
         (if (i32.eq (local.get $n) (i32.const 2))
-          (then (br_if $scan (i32.ne (local.get $c) (i32.const "$"))))
-          (else (br_if $none (i32.or (call $isDigit (local.get $c))
-            (call $isWhiteCp (call $utf8Before (i32.sub (i32.add (local.get $base) (local.get $i)) (i32.const 1))
-              (i32.add (local.get $base) (local.get $q))))))))
+          (then
+            (if (i32.ne (local.get $c) (i32.const "$"))
+              (then
+                (local.set $prev2 (local.get $prev1))
+                (local.set $prev1 (i32.const "$"))
+                (br $scan)))
+            ;; llm-math rejects `$$` preceded by a line ending
+            (if (global.get $texMath)
+              (then
+                (local.set $c (i32.load8_u (i32.sub (i32.add (local.get $base) (local.get $i)) (i32.const 2))))
+                (br_if $none (i32.or (i32.eq (local.get $c) (i32.const 10))
+                  (i32.eq (local.get $c) (i32.const 13)))))))
+          (else
+            (br_if $none (i32.or (call $isDigit (local.get $c))
+              (call $isWhiteCp (call $utf8Before (i32.sub (i32.add (local.get $base) (local.get $i)) (i32.const 1))
+                (i32.add (local.get $base) (local.get $q))))))
+            ;; `$HOME,$PATH` stays prose: `,` before closing `$` needs EOF,
+            ;; whitespace, or `.,;:)]}` after it.
+            (if (i32.and (global.get $texMath)
+                  (i32.and (i32.eq (i32.load8_u (i32.sub (i32.add (local.get $base) (local.get $i)) (i32.const 2)))
+                      (i32.const ","))
+                    (i32.ne (local.get $c) (i32.const 0))))
+              (then
+                (br_if $none (i32.eqz (i32.or (call $isWhiteByte (local.get $c))
+                  (call $byteIn (local.get $c) (i64.const 0x0c00520000000000) (i64.const 0x2000000020000000)))))))))
         (return (i32.add (local.get $i) (i32.sub (local.get $n) (i32.const 1))))))
     (i32.const 0))
 
@@ -667,7 +712,8 @@
                     (local.set $p (local.get $q))
                     (br $l)))))
             (br $done)))
-        (if (i32.eq (local.get $c) (i32.const "\60"))
+        (if (i32.and (i32.eq (local.get $c) (i32.const "\60"))
+              (i32.ge_u (local.get $p) (global.get $cellCodeUntil)))
           (then
             ;; a code span: a run of backticks up to an equal run
             (local.set $q (call $runEnd (local.get $p) (local.get $end) (i32.const "\60")))
@@ -685,6 +731,29 @@
                 (local.set $q (local.get $c))
                 (br $find)))
             (br $l)))
+        ;; Math does not start inside raw HTML, autolinks, or link destinations.
+        (if (i32.and (i32.eq (local.get $c) (i32.const "<"))
+              (i32.ge_u (local.get $p) (global.get $cellCodeUntil)))
+          (then
+            (local.set $q (call $scanAutolinkUri (local.get $p) (local.get $end)))
+            (if (i32.eqz (local.get $q))
+              (then (local.set $q (call $scanHtmlAny (local.get $p) (local.get $end)))))
+            (if (local.get $q) (then (global.set $cellCodeUntil (local.get $q))))))
+        (if (i32.and (i32.eq (local.get $c) (i32.const "]"))
+              (i32.and (i32.ge_u (local.get $p) (global.get $cellCodeUntil))
+                (i32.and (i32.lt_u (i32.add (local.get $p) (i32.const 1)) (local.get $end))
+                  (i32.eq (i32.load8_u offset=1 (local.get $p)) (i32.const "(")))))
+          (then
+            (local.set $q (call $skipWs (i32.add (local.get $p) (i32.const 2)) (local.get $end)))
+            (local.set $n (call $scanLinkDest (local.get $q) (local.get $end)))
+            (if (i32.ge_s (local.get $n) (i32.const 0))
+              (then
+                (local.set $q (call $skipWs (local.get $n) (local.get $end)))
+                (if (i32.ne (local.get $q) (local.get $n))
+                  (then
+                    (local.set $c (call $scanLinkTitle (local.get $q) (local.get $end)))
+                    (if (local.get $c) (then (local.set $n (local.get $c))))))
+                (global.set $cellCodeUntil (local.get $n))))))
         (if (i32.and (i32.eq (local.get $c) (i32.const "$"))
               (i32.ge_u (local.get $p) (global.get $cellCodeUntil)))
           (then

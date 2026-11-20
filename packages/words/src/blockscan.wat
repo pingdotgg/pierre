@@ -304,7 +304,9 @@
         (local.set $p (call $lineAfter (local.get $p)))
         (if (i32.ge_u (local.get $p) (global.get $eof))
           (then
-            (local.set $ok (i32.const 1))
+            ;; With texDelimiters, an unclosed `$$` or `\[` stays prose while
+            ;; streaming instead of rendering an unclosed math SVG.
+            (local.set $ok (i32.eqz (global.get $texMath)))
             (br $done)))
         (local.set $end (call $findLineEnd (local.get $p)))
         ;; match the containers; $pcol is the column where byte $q starts and
@@ -327,11 +329,12 @@
                   (local.set $fcol (i32.add (local.get $fcol) (i32.const 1)))))
               (local.set $f (i32.add (local.get $f) (i32.const 1)))
               (br $space)))
-          ;; A blank line ends a `$$` block unclosed. A `\[` block holds it,
-          ;; unless the line ends a quote around it.
+          ;; A blank line ends a `$$` block unclosed unless texDelimiters is on;
+          ;; with texDelimiters, both `$$` and `\[` hold blank lines unless the
+          ;; line ends a quote around them.
           (if (i32.ge_u (local.get $f) (local.get $end))
             (then
-              (br_if $done (i32.eqz (local.get $tex)))
+              (br_if $done (i32.eqz (global.get $texMath)))
               (local.set $e (local.get $i))
               (block $open
                 (loop $quotes

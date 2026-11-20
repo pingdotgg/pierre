@@ -3247,6 +3247,9 @@
     (local $line i32)
     (local $len i32)
     (local $dst i32)
+    (if (i32.and (global.get $texMath)
+          (i32.eq (local.get $r) (global.get $incompleteCodeRec)))
+      (then (return (i32.const 0))))
     (if (i32.eqz (i32.and (i32.load8_u offset=1 (local.get $r)) (i32.const $F.math)))
       (then
         (if (i32.eqz (i32.and (i32.load8_u offset=1 (local.get $r)) (i32.const $F.fenced))) (then (return (i32.const 0))))
