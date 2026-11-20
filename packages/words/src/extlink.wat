@@ -9,6 +9,22 @@
   ;; addresses become links. They never fire inside a bracket, and never reach
   ;; back into a construct that was already recognized.
 
+  ;; CJK Symbols and Punctuation (U+3000..U+303F), Halfwidth and Fullwidth
+  ;; Forms (U+FF00..U+FFEF), and Arabic comma/semicolon/question/full stop,
+  ;; limited to Unicode P|S as in remarkEndAutolinksAtScriptPunctuation.
+  (func $isScriptPunctCp (param $cp i32) (result i32)
+    (i32.and
+      (i32.or
+        (i32.or
+          (i32.le_u (i32.sub (local.get $cp) (i32.const 0x3000)) (i32.const 0x3f))
+          (i32.le_u (i32.sub (local.get $cp) (i32.const 0xff00)) (i32.const 0xef)))
+        (i32.or
+          (i32.or (i32.eq (local.get $cp) (i32.const 0x060c))
+            (i32.eq (local.get $cp) (i32.const 0x061b)))
+          (i32.or (i32.eq (local.get $cp) (i32.const 0x061f))
+            (i32.eq (local.get $cp) (i32.const 0x06d4)))))
+      (call $isPunctCp (local.get $cp))))
+
   ;; trailing punctuation, unbalanced closing parens and entity references are
   ;; not part of an extended autolink
   (func $autolinkDelim (param $beg i32) (param $scan i32) (param $end i32) (result i32)
@@ -16,13 +32,33 @@
     (local $c i32)
     (local $parens i32) ;; `)` minus `(` in the scanned part
     (local $ne i32)
+    (local $allAscii i32)
     (local.set $base (global.get $contentBase))
+    (local.set $allAscii (global.get $autolinkBound))
+    (if (local.get $allAscii)
+      (then
+        (local.set $ne (local.get $beg))
+        (block $checked
+          (loop $a
+            (br_if $checked (i32.ge_u (local.get $ne) (local.get $scan)))
+            (if (i32.ge_u (i32.load8_u (i32.add (local.get $base) (local.get $ne))) (i32.const 0x80))
+              (then
+                (local.set $allAscii (i32.const 0))
+                (br $checked)))
+            (local.set $ne (i32.add (local.get $ne) (i32.const 1)))
+            (br $a)))))
     (block $scanned
       (loop $l
         (br_if $scanned (i32.ge_u (local.get $scan) (local.get $end)))
         (local.set $c (i32.load8_u (i32.add (local.get $base) (local.get $scan))))
         (br_if $scanned (i32.or
           (call $isWhiteByte (local.get $c)) (i32.eq (local.get $c) (i32.const "<"))))
+        (if (i32.and (local.get $allAscii) (i32.ge_u (local.get $c) (i32.const 0x80)))
+          (then
+            (br_if $scanned (call $isScriptPunctCp (call $utf8At
+              (i32.add (local.get $base) (local.get $scan))
+              (i32.add (local.get $base) (local.get $end)))))
+            (local.set $allAscii (i32.const 0))))
         (local.set $parens (i32.sub
           (i32.add (local.get $parens) (i32.eq (local.get $c) (i32.const ")")))
           (i32.eq (local.get $c) (i32.const "("))))
@@ -154,11 +190,16 @@
       (br_if $no (global.get $bracketSp))
       (br_if $no (i32.lt_u (local.get $p) (i32.const 3)))
       (br_if $no (i32.lt_u (local.get $beg) (global.get $lastMarkEnd)))
-      ;; only after whitespace, `*`, `_`, `~` or `(`
+      ;; only after whitespace, `*`, `_`, `~` or `(`, or script punctuation with autolinkBoundaries
       (if (local.get $beg)
-        (then (br_if $no (i32.eqz (call $byteIn
-          (i32.load8_u (i32.sub (i32.add (local.get $base) (local.get $beg)) (i32.const 1)))
-          (i64.const 0x50100003e00) (i64.const 0x4000000080000000))))))
+        (then
+          (local.set $n (i32.load8_u (i32.sub (i32.add (local.get $base) (local.get $beg)) (i32.const 1))))
+          (br_if $no (i32.eqz (i32.or
+            (call $byteIn (local.get $n) (i64.const 0x50100003e00) (i64.const 0x4000000080000000))
+            (i32.and (global.get $autolinkBound)
+              (i32.and (i32.ge_u (local.get $n) (i32.const 0x80))
+                (call $isScriptPunctCp (call $utf8Before
+                  (i32.add (local.get $base) (local.get $beg)) (local.get $base))))))))))
       (br_if $no (i32.lt_u (local.get $beg) (global.get $wwwRejectBefore)))
       (br_if $no (i32.eqz (local.tee $n
         (call $urlAutolink (local.get $beg) (local.get $beg) (local.get $end) (i32.const 1)))))
@@ -300,4 +341,61 @@
       (drop (call $markNew (enum.get $Mk.extlink) (local.get $beg) (local.get $q) (local.get $kind)))
       (return (local.get $q)))
     (i32.add (local.get $p) (i32.const 1)))
+
+  ;; With autolinkBoundaries, absorb literal `_` and `~` runs right after a
+  ;; URL extlink once emphasis has claimed any delimiters that matched.
+  (func $absorbAutolinkSuffix (param $end i32)
+    (local $base i32)
+    (local $i i32)
+    (local $j i32)
+    (local $n i32)
+    (local $m i32)
+    (local $nm i32)
+    (local $p i32)
+    (local $lim i32)
+    (local $c i32)
+    (local $rem i32)
+    (local.set $base (global.get $contentBase))
+    (local.set $n (global.get $nSlots))
+    (block $done
+      (loop $l
+        (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+        (local.set $m (call $slotAt (local.get $i)))
+        (if (i32.and
+              (i32.eq (i32.load8_u offset=$M.type (local.get $m)) (enum.get $Mk.extlink))
+              (i32.le_u (i32.load offset=$M.data (local.get $m)) (i32.const 1)))
+          (then
+            (local.set $p (i32.load offset=$M.end (local.get $m)))
+            (local.set $j (i32.add (local.get $i) (i32.const 1)))
+            (block $stop
+              (loop $step
+                (local.set $lim (select (i32.load offset=$M.beg (call $slotAt (local.get $j)))
+                  (local.get $end) (i32.lt_u (local.get $j) (local.get $n))))
+                (loop $lit
+                  (if (i32.lt_u (local.get $p) (local.get $lim))
+                    (then
+                      (local.set $c (i32.load8_u (i32.add (local.get $base) (local.get $p))))
+                      (br_if $stop (i32.and (i32.ne (local.get $c) (i32.const "_"))
+                        (i32.ne (local.get $c) (i32.const "~"))))
+                      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+                      (br $lit))))
+                (br_if $stop (i32.ge_u (local.get $j) (local.get $n)))
+                (local.set $nm (call $slotAt (local.get $j)))
+                (br_if $stop (i32.ne (i32.load8_u offset=$M.type (local.get $nm)) (enum.get $Mk.emph)))
+                (local.set $c (i32.load8_u offset=$M.ch (local.get $nm)))
+                (br_if $stop (i32.and (i32.ne (local.get $c) (i32.const "_"))
+                  (i32.ne (local.get $c) (i32.const "~"))))
+                (br_if $stop (i32.ne (i32.load offset=$M.closeTail (local.get $nm)) (i32.const 0)))
+                (local.set $rem (i32.load offset=$M.rem (local.get $nm)))
+                (br_if $stop (i32.eqz (local.get $rem)))
+                (local.set $p (i32.add (local.get $p) (local.get $rem)))
+                (i32.store offset=$M.beg (local.get $nm)
+                  (i32.add (i32.load offset=$M.beg (local.get $nm)) (local.get $rem)))
+                (i32.store offset=$M.rem (local.get $nm) (i32.const 0))
+                (br_if $stop (i32.ne (i32.load offset=$M.openHead (local.get $nm)) (i32.const 0)))
+                (local.set $j (i32.add (local.get $j) (i32.const 1)))
+                (br $step)))
+            (i32.store offset=$M.end (local.get $m) (local.get $p))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $l))))
 )

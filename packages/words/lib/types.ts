@@ -52,6 +52,12 @@ export interface HtmlSessionOptions {
    */
   texDelimiters?: boolean;
   /**
+   * End ASCII bare URLs before CJK and Arabic punctuation (so surrounding
+   * emphasis closes), allow `www.` after such punctuation, and keep trailing
+   * `_` and `~` on bare URLs when they do not close emphasis or strikethrough.
+   */
+  autolinkBoundaries?: boolean;
+  /**
    * With `false`, only a run of exactly two tildes is a strikethrough
    * delimiter, as remark-gfm's `singleTilde: false`. Defaults to `true`.
    */

@@ -57,7 +57,9 @@
     (global.set $mode (i32.load8_u (i32.const 0)))
     (global.set $fmt (i32.load8_u (i32.const 26)))
     (global.set $ext (i32.load8_u (i32.const 31)))
-    (global.set $lw (i32.and (i32.load16_u (i32.const 34)) (i32.const 0x7fff)))
+    (global.set $lw (i32.and (i32.load16_u (i32.const 34)) (i32.const 0x3fff)))
+    (global.set $autolinkBound (i32.and (i32.shr_u (i32.load16_u (i32.const 34)) (i32.const 14))
+      (i32.const 1)))
     (global.set $texMath (i32.and (i32.shr_u (i32.load16_u (i32.const 34)) (i32.const 15))
       (i32.shr_u (global.get $ext) (i32.const 1))))
     ;; with texDelimiters `\` (bit 4 of byte 11) may start a math block

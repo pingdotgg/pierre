@@ -456,3 +456,51 @@ void test('sourcePositions gives math its whole source range', () => {
   assert.equal(output.match(/<svg /g)?.length, 8);
   assert.doesNotMatch(html('$x$', { math: true }), /data-sourcepos/);
 });
+
+void test('autolinkBoundaries keeps trailing _/~ and stops at CJK/Arabic punctuation', () => {
+  const on = { autolinkBoundaries: true };
+  const link = (url: string) =>
+    `<a href="${/^www\./i.test(url) ? `http://${url}` : url}">${url}</a>`;
+  for (const [markdown, expected] of [
+    ['See https://x.com/dimasike_ next', `<p>See ${link('https://x.com/dimasike_')} next</p>\n`],
+    ['See http://example.com/name__ next', `<p>See ${link('http://example.com/name__')} next</p>\n`],
+    ['See https://example.com/name~ next', `<p>See ${link('https://example.com/name~')} next</p>\n`],
+    ['See https://example.com/name__~~_. next', `<p>See ${link('https://example.com/name__~~_')}. next</p>\n`],
+    ['See www.example.com/name_ next', `<p>See ${link('www.example.com/name_')} next</p>\n`],
+    ['*https://x.com/dimasike_*', `<p><em>${link('https://x.com/dimasike_')}</em></p>\n`],
+    ['_https://x.com/dimasike_', `<p><em>${link('https://x.com/dimasike')}</em></p>\n`],
+    ['__https://x.com/dimasike__', `<p><strong>${link('https://x.com/dimasike')}</strong></p>\n`],
+    ['~~https://example.com/name_~~', `<p><del>${link('https://example.com/name_')}</del></p>\n`],
+    ['~~https://example.com/name~~', `<p><del>${link('https://example.com/name')}</del></p>\n`],
+    ['_https://example.com/name~_', `<p><em>${link('https://example.com/name~')}</em></p>\n`],
+    ['foo _bar_ https://x.com/dimasike_', `<p>foo <em>bar</em> ${link('https://x.com/dimasike_')}</p>\n`],
+    ['Mail person@example.com_', '<p>Mail person@example.com_</p>\n'],
+    ['打开 http://localhost:18780，然后刷新', `<p>打开 ${link('http://localhost:18780')}，然后刷新</p>\n`],
+    ['可以看了：**http://localhost:18780**（已重启）。', `<p>可以看了：<strong>${link('http://localhost:18780')}</strong>（已重启）。</p>\n`],
+    ['__http://localhost:18780__，*http://localhost:3000*，~~http://localhost:3001~~。',
+      `<p><strong>${link('http://localhost:18780')}</strong>，<em>${link('http://localhost:3000')}</em>，<del>${link('http://localhost:3001')}</del>。</p>\n`],
+    ['http://a.com。http://b.com，www.c.com、person@example.com。',
+      `<p>${link('http://a.com')}。${link('http://b.com')}，${link('www.c.com')}、<a href="mailto:person@example.com">person@example.com</a>。</p>\n`],
+    ['「www.example.com」', `<p>「${link('www.example.com')}」</p>\n`],
+    ['https://example.com/a_。下一句', `<p>${link('https://example.com/a_')}。下一句</p>\n`],
+    ['https://example.com/a.，下一句', `<p>${link('https://example.com/a')}.，下一句</p>\n`],
+    ['https://zh.wikipedia.org/wiki/北京（城市）',
+      '<p><a href="https://zh.wikipedia.org/wiki/%E5%8C%97%E4%BA%AC%EF%BC%88%E5%9F%8E%E5%B8%82%EF%BC%89">https://zh.wikipedia.org/wiki/北京（城市）</a></p>\n'],
+    ['منشور على https://example.com/report، ونسخته', `<p>منشور على ${link('https://example.com/report')}، ونسخته</p>\n`],
+    ['هل يعمل **http://localhost:3000**؟ نعم؛ www.example.com۔',
+      `<p>هل يعمل <strong>${link('http://localhost:3000')}</strong>؟ نعم؛ ${link('www.example.com')}۔</p>\n`],
+  ] as const) {
+    assert.equal(html(markdown, on), expected, markdown);
+  }
+  // Off by default: standard GFM trims trailing `_` and runs past CJK punctuation.
+  assert.equal(html('See https://x.com/dimasike_ next'), `<p>See ${link('https://x.com/dimasike')}_ next</p>\n`);
+  assert.equal(
+    html('打开 http://localhost:18780，然后刷新'),
+    '<p>打开 <a href="http://localhost:18780%EF%BC%8C%E7%84%B6%E5%90%8E%E5%88%B7%E6%96%B0">http://localhost:18780，然后刷新</a></p>\n'
+  );
+  // Session round-trip preserves the flag.
+  assert.equal(
+    createHtmlSession().render('See https://x.com/dimasike_\n\n', on).html,
+    `<p>See ${link('https://x.com/dimasike_')}</p>\n`
+  );
+});

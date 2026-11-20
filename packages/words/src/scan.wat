@@ -165,6 +165,9 @@
 
   ;; Option bits of control byte 31: 1 = cjk, 2 = math.
   (global $ext (mut i32) (i32.const 0))
+  ;; autolinkBoundaries: stop ASCII bare URLs at CJK/Arabic punctuation and
+  ;; keep trailing `_`/`~` (control bit 14 of bytes 34-35)
+  (global $autolinkBound (mut i32) (i32.const 0))
   ;; texDelimiters with math: `\(…\)` and `\[…\]` are math too (control bit
   ;; 15 of bytes 34-35)
   (global $texMath (mut i32) (i32.const 0))

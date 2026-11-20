@@ -293,7 +293,9 @@
         (br $l)))
     ;; most leaves hold no delimiter run
     (if (i32.ge_s (global.get $delimHead) (i32.const 0))
-      (then (call $processEmphasis (i32.const 0) (i32.const -1)))))
+      (then (call $processEmphasis (i32.const 0) (i32.const -1))))
+    (if (global.get $autolinkBound)
+      (then (call $absorbAutolinkSuffix (local.get $end)))))
 
   ;; Whether the word before content offset $p, back to the last whitespace,
   ;; ends in a drive path: /(?:^|\W)[A-Za-z]:(?:[\\/]\S*)?$/ (windowsPaths).
