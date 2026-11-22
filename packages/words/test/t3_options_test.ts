@@ -506,6 +506,10 @@ void test('texDelimiters handles blank lines, unclosed blocks, shell vars, code,
   );
   assert.match(linkMathTable, /<td>y\$<\/td>/);
   assert.equal(linkMathTable.match(/<svg /g)?.length, 1);
+  // Control bytes inside math do not trap with an out-of-bounds table load.
+  for (const byte of ['\u0001', '\u0007', '\u001b', '\u001f']) {
+    assert.match(html(`Pasted: $a${byte}b + c$`, on), /<svg /);
+  }
 });
 
 void test('autolinkBoundaries keeps trailing _/~ and stops at CJK/Arabic punctuation', () => {

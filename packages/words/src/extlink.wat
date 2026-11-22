@@ -369,8 +369,9 @@
             (local.set $j (i32.add (local.get $i) (i32.const 1)))
             (block $stop
               (loop $step
-                (local.set $lim (select (i32.load offset=$M.beg (call $slotAt (local.get $j)))
-                  (local.get $end) (i32.lt_u (local.get $j) (local.get $n))))
+                (local.set $lim (if (result i32) (i32.lt_u (local.get $j) (local.get $n))
+                  (then (i32.load offset=$M.beg (call $slotAt (local.get $j))))
+                  (else (local.get $end))))
                 (loop $lit
                   (if (i32.lt_u (local.get $p) (local.get $lim))
                     (then
